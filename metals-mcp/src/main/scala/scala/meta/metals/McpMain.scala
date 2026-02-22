@@ -44,6 +44,7 @@ object McpMain {
       port: Option[Int] = None,
       transport: Transport = Transport.Http,
       client: Client = NoClient,
+      bspBackend: Option[String] = None,
   )
 
   private val validClients: String =
@@ -118,6 +119,9 @@ object McpMain {
               )
           }
 
+        case "--bsp-backend" :: backend :: rest =>
+          parse(rest, config.copy(bspBackend = Some(backend)))
+
         case unknown :: _ =>
           Left(s"Unknown argument: $unknown")
       }
@@ -141,6 +145,7 @@ object McpMain {
          |  --port <number>         HTTP port to listen on (default: auto-assign)
          |  --transport <type>      Transport type: http (default) or stdio (reserved for future use)
          |  --client <name>         Client to generate config for: $validClients
+         |  --bsp-backend <name>    Force a specific BSP backend (e.g. sbt, bloop, mill)
          |  --help, -h              Show this help message
          |  --version, -v           Show version information
          |
@@ -184,6 +189,7 @@ object McpMain {
       config.port,
       sh,
       config.client,
+      config.bspBackend,
     )(ec)
 
     Runtime.getRuntime.addShutdownHook(new Thread(() => {

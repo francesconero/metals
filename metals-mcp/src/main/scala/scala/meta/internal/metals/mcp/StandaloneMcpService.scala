@@ -32,6 +32,7 @@ class StandaloneMcpService(
     port: Option[Int],
     scheduledExecutor: ScheduledExecutorService,
     client: Client = NoClient,
+    bspBackend: Option[String] = None,
 )(implicit ec: ExecutionContextExecutorService)
     extends Cancelable {
   port match {
@@ -129,6 +130,10 @@ class StandaloneMcpService(
 
   def start(): Unit = {
     scribe.info("Starting MCP server...")
+    bspBackend.foreach { backend =>
+      scribe.info(s"Forcing BSP backend: $backend")
+      projectMetalsLspService.tables.buildServers.chooseServer(backend)
+    }
     Await.result(projectMetalsLspService.initialized(), 10.minutes)
     Await.result(projectMetalsLspService.startMcpServer(), 2.minutes)
     cancelables.add(projectMetalsLspService)

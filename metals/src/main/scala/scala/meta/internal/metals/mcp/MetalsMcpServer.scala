@@ -1169,42 +1169,42 @@ class MetalsMcpServer(
           ensureFreshBuild().flatMap { _ =>
             renameProvider
               .rename(params, EmptyCancelToken)
-            .flatMap { edit =>
-              val hasChanges =
-                Option(edit.getChanges).exists(!_.isEmpty) ||
-                  Option(edit.getDocumentChanges).exists(!_.isEmpty)
-              if (!hasChanges) {
-                Future.successful(
-                  new CallToolResult(
-                    createContent(
-                      s"No renameable symbol found at $file:$line:$character"
-                    ),
-                    false,
+              .flatMap { edit =>
+                val hasChanges =
+                  Option(edit.getChanges).exists(!_.isEmpty) ||
+                    Option(edit.getDocumentChanges).exists(!_.isEmpty)
+                if (!hasChanges) {
+                  Future.successful(
+                    new CallToolResult(
+                      createContent(
+                        s"No renameable symbol found at $file:$line:$character"
+                      ),
+                      false,
+                    )
                   )
-                )
-              } else {
-                languageClient
-                  .applyEdit(new ApplyWorkspaceEditParams(edit))
-                  .asScala
-                  .map { response =>
-                    if (response.isApplied) {
-                      new CallToolResult(
-                        createContent(
-                          s"Successfully renamed symbol to '$newName'"
-                        ),
-                        false,
-                      )
-                    } else {
-                      new CallToolResult(
-                        createContent(
-                          s"Failed to apply rename: ${Option(response.getFailureReason).getOrElse("unknown error")}"
-                        ),
-                        true,
-                      )
+                } else {
+                  languageClient
+                    .applyEdit(new ApplyWorkspaceEditParams(edit))
+                    .asScala
+                    .map { response =>
+                      if (response.isApplied) {
+                        new CallToolResult(
+                          createContent(
+                            s"Successfully renamed symbol to '$newName'"
+                          ),
+                          false,
+                        )
+                      } else {
+                        new CallToolResult(
+                          createContent(
+                            s"Failed to apply rename: ${Option(response.getFailureReason).getOrElse("unknown error")}"
+                          ),
+                          true,
+                        )
+                      }
                     }
-                  }
+                }
               }
-            }
           }.toMono
         }
       },
