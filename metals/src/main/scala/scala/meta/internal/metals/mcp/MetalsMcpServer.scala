@@ -591,16 +591,15 @@ class MetalsMcpServer(
       withErrorHandling { (exchange, arguments) =>
         val query = arguments.getAs[String]("query")
         val path = arguments.getFileInFocus
-        ensureFreshBuild().flatMap { _ =>
-          queryEngine
-            .globSearch(query, Set.empty, path)
-            .map(result =>
-              new CallToolResult(
-                createContent(result.map(_.show).mkString("\n")),
-                false,
-              )
+        queryEngine
+          .globSearch(query, Set.empty, path)
+          .map(result =>
+            new CallToolResult(
+              createContent(result.map(_.show).mkString("\n")),
+              false,
             )
-        }.toMono
+          )
+          .toMono
       },
     )
   }
@@ -658,16 +657,15 @@ class MetalsMcpServer(
         val symbolTypesSet =
           symbolTypes.flatMap(s => SymbolType.values.find(_.name == s)).toSet
 
-        ensureFreshBuild().flatMap { _ =>
-          queryEngine
-            .globSearch(query, symbolTypesSet, path)
-            .map(result =>
-              new CallToolResult(
-                createContent(result.map(_.show).mkString("\n")),
-                false,
-              )
+        queryEngine
+          .globSearch(query, symbolTypesSet, path)
+          .map(result =>
+            new CallToolResult(
+              createContent(result.map(_.show).mkString("\n")),
+              false,
             )
-        }.toMono
+          )
+          .toMono
       },
     )
   }
@@ -722,16 +720,15 @@ class MetalsMcpServer(
         val searchAllTargets = arguments
           .getOptAs[Boolean]("searchAllTargets")
           .getOrElse(false)
-        ensureFreshBuild().flatMap { _ =>
-          queryEngine
-            .inspect(fqcn, pathOpt, moduleOpt, searchAllTargets)
-            .map(result =>
-              new CallToolResult(
-                createContent(result.show),
-                false,
-              )
+        queryEngine
+          .inspect(fqcn, pathOpt, moduleOpt, searchAllTargets)
+          .map(result =>
+            new CallToolResult(
+              createContent(result.show),
+              false,
             )
-        }.toMono
+          )
+          .toMono
       },
     )
   }
@@ -777,7 +774,7 @@ class MetalsMcpServer(
         val fqcn = arguments.getFqcn
         val pathOpt = arguments.getFileInFocusOpt
         val moduleOpt = arguments.getOptNoEmptyString("module")
-        ensureFreshBuild().map { _ =>
+        Future {
           queryEngine.getDocumentation(fqcn, pathOpt, moduleOpt) match {
             case Some(result) =>
               new CallToolResult(createContent(result.show), false)
@@ -833,7 +830,7 @@ class MetalsMcpServer(
         val fqcn = arguments.getFqcn
         val pathOpt = arguments.getFileInFocusOpt
         val moduleOpt = arguments.getOptNoEmptyString("module")
-        ensureFreshBuild().map { _ =>
+        Future {
           val result = queryEngine.getUsages(fqcn, pathOpt, moduleOpt)
           new CallToolResult(createContent(result.show(projectPath)), false)
         }.toMono
@@ -1074,7 +1071,9 @@ class MetalsMcpServer(
         """|Report the compilation freshness of all build targets in the project.
            |For each module, reports whether it is: currently compiling, stale (source
            |files changed since last compile), never compiled, or up to date.
-           |Use this before running rename or get-usages to check if semanticdb is fresh.""".stripMargin
+           |Use this before running any semanticdb-dependent tool (glob-search, typed-glob-search,
+           |inspect, get-docs, get-usages, rename) to check if the build is fresh. If any target
+           |is stale or never compiled, call compile-full first.""".stripMargin
       )
       .inputSchema(jsonMapper, schema)
       .build()
@@ -1166,46 +1165,45 @@ class MetalsMcpServer(
             new Position(line, character),
             newName,
           )
-          ensureFreshBuild().flatMap { _ =>
-            renameProvider
-              .rename(params, EmptyCancelToken)
-              .flatMap { edit =>
-                val hasChanges =
-                  Option(edit.getChanges).exists(!_.isEmpty) ||
-                    Option(edit.getDocumentChanges).exists(!_.isEmpty)
-                if (!hasChanges) {
-                  Future.successful(
-                    new CallToolResult(
-                      createContent(
-                        s"No renameable symbol found at $file:$line:$character"
-                      ),
-                      false,
-                    )
+          renameProvider
+            .rename(params, EmptyCancelToken)
+            .flatMap { edit =>
+              val hasChanges =
+                Option(edit.getChanges).exists(!_.isEmpty) ||
+                  Option(edit.getDocumentChanges).exists(!_.isEmpty)
+              if (!hasChanges) {
+                Future.successful(
+                  new CallToolResult(
+                    createContent(
+                      s"No renameable symbol found at $file:$line:$character"
+                    ),
+                    false,
                   )
-                } else {
-                  languageClient
-                    .applyEdit(new ApplyWorkspaceEditParams(edit))
-                    .asScala
-                    .map { response =>
-                      if (response.isApplied) {
-                        new CallToolResult(
-                          createContent(
-                            s"Successfully renamed symbol to '$newName'"
-                          ),
-                          false,
-                        )
-                      } else {
-                        new CallToolResult(
-                          createContent(
-                            s"Failed to apply rename: ${Option(response.getFailureReason).getOrElse("unknown error")}"
-                          ),
-                          true,
-                        )
-                      }
+                )
+              } else {
+                languageClient
+                  .applyEdit(new ApplyWorkspaceEditParams(edit))
+                  .asScala
+                  .map { response =>
+                    if (response.isApplied) {
+                      new CallToolResult(
+                        createContent(
+                          s"Successfully renamed symbol to '$newName'"
+                        ),
+                        false,
+                      )
+                    } else {
+                      new CallToolResult(
+                        createContent(
+                          s"Failed to apply rename: ${Option(response.getFailureReason).getOrElse("unknown error")}"
+                        ),
+                        true,
+                      )
                     }
-                }
+                  }
               }
-          }.toMono
+            }
+            .toMono
         }
       },
     )
@@ -1407,9 +1405,6 @@ class MetalsMcpServer(
       },
     )
   }
-
-  private def ensureFreshBuild(): Future[Unit] =
-    compilations.cascadeCompile(buildTargets.allBuildTargetIds)
 
   private def withErrorHandling(
       f: (McpAsyncServerExchange, JMap[String, Object]) => Mono[CallToolResult]
