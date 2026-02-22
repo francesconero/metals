@@ -591,15 +591,16 @@ class MetalsMcpServer(
       withErrorHandling { (exchange, arguments) =>
         val query = arguments.getAs[String]("query")
         val path = arguments.getFileInFocus
-        queryEngine
-          .globSearch(query, Set.empty, path)
-          .map(result =>
-            new CallToolResult(
-              createContent(result.map(_.show).mkString("\n")),
-              false,
+        ensureFreshBuild().flatMap { _ =>
+          queryEngine
+            .globSearch(query, Set.empty, path)
+            .map(result =>
+              new CallToolResult(
+                createContent(result.map(_.show).mkString("\n")),
+                false,
+              )
             )
-          )
-          .toMono
+        }.toMono
       },
     )
   }
@@ -657,15 +658,16 @@ class MetalsMcpServer(
         val symbolTypesSet =
           symbolTypes.flatMap(s => SymbolType.values.find(_.name == s)).toSet
 
-        queryEngine
-          .globSearch(query, symbolTypesSet, path)
-          .map(result =>
-            new CallToolResult(
-              createContent(result.map(_.show).mkString("\n")),
-              false,
+        ensureFreshBuild().flatMap { _ =>
+          queryEngine
+            .globSearch(query, symbolTypesSet, path)
+            .map(result =>
+              new CallToolResult(
+                createContent(result.map(_.show).mkString("\n")),
+                false,
+              )
             )
-          )
-          .toMono
+        }.toMono
       },
     )
   }
@@ -720,15 +722,16 @@ class MetalsMcpServer(
         val searchAllTargets = arguments
           .getOptAs[Boolean]("searchAllTargets")
           .getOrElse(false)
-        queryEngine
-          .inspect(fqcn, pathOpt, moduleOpt, searchAllTargets)
-          .map(result =>
-            new CallToolResult(
-              createContent(result.show),
-              false,
+        ensureFreshBuild().flatMap { _ =>
+          queryEngine
+            .inspect(fqcn, pathOpt, moduleOpt, searchAllTargets)
+            .map(result =>
+              new CallToolResult(
+                createContent(result.show),
+                false,
+              )
             )
-          )
-          .toMono
+        }.toMono
       },
     )
   }
@@ -774,7 +777,7 @@ class MetalsMcpServer(
         val fqcn = arguments.getFqcn
         val pathOpt = arguments.getFileInFocusOpt
         val moduleOpt = arguments.getOptNoEmptyString("module")
-        Future {
+        ensureFreshBuild().map { _ =>
           queryEngine.getDocumentation(fqcn, pathOpt, moduleOpt) match {
             case Some(result) =>
               new CallToolResult(createContent(result.show), false)
@@ -830,7 +833,7 @@ class MetalsMcpServer(
         val fqcn = arguments.getFqcn
         val pathOpt = arguments.getFileInFocusOpt
         val moduleOpt = arguments.getOptNoEmptyString("module")
-        Future {
+        ensureFreshBuild().map { _ =>
           val result = queryEngine.getUsages(fqcn, pathOpt, moduleOpt)
           new CallToolResult(createContent(result.show(projectPath)), false)
         }.toMono
@@ -1163,8 +1166,9 @@ class MetalsMcpServer(
             new Position(line, character),
             newName,
           )
-          renameProvider
-            .rename(params, EmptyCancelToken)
+          ensureFreshBuild().flatMap { _ =>
+            renameProvider
+              .rename(params, EmptyCancelToken)
             .flatMap { edit =>
               val hasChanges =
                 Option(edit.getChanges).exists(!_.isEmpty) ||
@@ -1201,7 +1205,7 @@ class MetalsMcpServer(
                   }
               }
             }
-            .toMono
+          }.toMono
         }
       },
     )
@@ -1403,6 +1407,9 @@ class MetalsMcpServer(
       },
     )
   }
+
+  private def ensureFreshBuild(): Future[Unit] =
+    compilations.cascadeCompile(buildTargets.allBuildTargetIds)
 
   private def withErrorHandling(
       f: (McpAsyncServerExchange, JMap[String, Object]) => Mono[CallToolResult]
