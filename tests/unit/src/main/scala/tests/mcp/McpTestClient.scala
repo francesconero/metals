@@ -97,6 +97,20 @@ class TestMcpClient(url: String, val port: Int)(implicit ec: ExecutionContext) {
     callTool("format-file", params).map(_.mkString)
   }
 
+  def rename(
+      filePath: String,
+      line: Int,
+      character: Int,
+      newName: String,
+  ): Future[String] = {
+    val params = objectMapper.createObjectNode()
+    params.put("file", filePath)
+    params.put("line", line)
+    params.put("character", character)
+    params.put("newName", newName)
+    callTool("rename", params).map(_.mkString)
+  }
+
   def generateScalafixRule(
       ruleImplementation: String,
       ruleDescription: String,

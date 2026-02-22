@@ -20,6 +20,7 @@ import scala.meta.internal.metals.Cancelable
 import scala.meta.internal.metals.Compilations
 import scala.meta.internal.metals.ConnectionProvider
 import scala.meta.internal.metals.Diagnostics
+import scala.meta.internal.metals.EmptyCancelToken
 import scala.meta.internal.metals.FormattingProvider
 import scala.meta.internal.metals.JsonParser.XtensionSerializableToJson
 import scala.meta.internal.metals.MetalsEnrichments._
@@ -31,6 +32,7 @@ import scala.meta.internal.metals.mcp.McpPrinter._
 import scala.meta.internal.metals.mcp.McpQueryEngine
 import scala.meta.internal.metals.mcp.SymbolType
 import scala.meta.internal.mtags.CoursierComplete
+import scala.meta.internal.rename.RenameProvider
 import scala.meta.io.AbsolutePath
 
 import ch.epfl.scala.bsp4j.BuildTargetIdentifier
@@ -54,6 +56,9 @@ import io.undertow.servlet.api.InstanceHandle
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams
 import org.eclipse.lsp4j.MessageParams
 import org.eclipse.lsp4j.MessageType
+import org.eclipse.lsp4j.Position
+import org.eclipse.lsp4j.RenameParams
+import org.eclipse.lsp4j.TextDocumentIdentifier
 import org.eclipse.lsp4j.WorkspaceEdit
 import org.eclipse.lsp4j.services.LanguageClient
 import reactor.core.publisher.Mono
@@ -73,6 +78,7 @@ class MetalsMcpServer(
     scalaVersionSelector: ScalaVersionSelector,
     formattingProvider: FormattingProvider,
     scalafixLlmRuleProvider: ScalafixLlmRuleProvider,
+    renameProvider: RenameProvider,
 )(implicit
     ec: ExecutionContext
 ) extends Cancelable {
@@ -128,6 +134,7 @@ class MetalsMcpServer(
     asyncServer.addTool(createFindDepTool()).subscribe()
     asyncServer.addTool(createListModulesTool()).subscribe()
     asyncServer.addTool(createFormatTool()).subscribe()
+    asyncServer.addTool(createRenameTool()).subscribe()
     asyncServer.addTool(createGenerateScalafixRuleTool()).subscribe()
     asyncServer.addTool(createRunScalafixRuleTool()).subscribe()
     asyncServer.addTool(createListScalafixRulesTool()).subscribe()
@@ -1042,6 +1049,109 @@ class MetalsMcpServer(
                 true,
               )
             )
+            .toMono
+        }
+      },
+    )
+  }
+
+  private def createRenameTool(): AsyncToolSpecification = {
+    val schema =
+      """|{
+         |  "type": "object",
+         |  "properties": {
+         |    "file": {
+         |      "type": "string",
+         |      "description": "The file containing the symbol to rename"
+         |    },
+         |    "line": {
+         |      "type": "integer",
+         |      "description": "The 0-based line number of the symbol to rename"
+         |    },
+         |    "character": {
+         |      "type": "integer",
+         |      "description": "The 0-based character offset of the symbol to rename"
+         |    },
+         |    "newName": {
+         |      "type": "string",
+         |      "description": "The new name for the symbol"
+         |    }
+         |  },
+         |  "required": ["file", "line", "character", "newName"]
+         |}""".stripMargin
+    val tool = Tool
+      .builder()
+      .name("rename")
+      .description(
+        """|Rename a Scala symbol across the entire project. Renames all occurrences of a
+           |symbol (class, method, variable, etc.) including definitions, usages, and imports.
+           |Requires the exact file path and cursor position (0-based line and character) of
+           |the symbol to rename. Also renames the file if a top-level type is renamed.""".stripMargin
+      )
+      .inputSchema(jsonMapper, schema)
+      .build()
+    new AsyncToolSpecification(
+      tool,
+      withErrorHandling { (_, arguments) =>
+        val file = arguments.getAs[String]("file")
+        val path = AbsolutePath(Path.of(file))(projectPath)
+        val line = arguments.getAs[Int]("line")
+        val character = arguments.getAs[Int]("character")
+        val newName = arguments.getAs[String]("newName")
+
+        if (!path.exists) {
+          Future
+            .successful(
+              new CallToolResult(
+                createContent(s"Error: File not found: $file"),
+                true,
+              )
+            )
+            .toMono
+        } else {
+          val params = new RenameParams(
+            new TextDocumentIdentifier(path.toURI.toString),
+            new Position(line, character),
+            newName,
+          )
+          renameProvider
+            .rename(params, EmptyCancelToken)
+            .flatMap { edit =>
+              val hasChanges =
+                Option(edit.getChanges).exists(!_.isEmpty) ||
+                  Option(edit.getDocumentChanges).exists(!_.isEmpty)
+              if (!hasChanges) {
+                Future.successful(
+                  new CallToolResult(
+                    createContent(
+                      s"No renameable symbol found at $file:$line:$character"
+                    ),
+                    false,
+                  )
+                )
+              } else {
+                languageClient
+                  .applyEdit(new ApplyWorkspaceEditParams(edit))
+                  .asScala
+                  .map { response =>
+                    if (response.isApplied) {
+                      new CallToolResult(
+                        createContent(
+                          s"Successfully renamed symbol to '$newName'"
+                        ),
+                        false,
+                      )
+                    } else {
+                      new CallToolResult(
+                        createContent(
+                          s"Failed to apply rename: ${Option(response.getFailureReason).getOrElse("unknown error")}"
+                        ),
+                        true,
+                      )
+                    }
+                  }
+              }
+            }
             .toMono
         }
       },

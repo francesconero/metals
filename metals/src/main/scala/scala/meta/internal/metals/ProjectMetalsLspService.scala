@@ -295,6 +295,7 @@ class ProjectMetalsLspService(
             scalaVersionSelector,
             formattingProvider,
             scalafixLlmRuleProvider,
+            renameProvider,
           )
         ).run()
     }.recover { case e: Exception =>

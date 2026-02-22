@@ -1,5 +1,7 @@
 package scala.meta.internal.metals.mcp
 
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.CompletableFuture
 import java.{util => ju}
 
@@ -17,6 +19,7 @@ import scala.meta.io.AbsolutePath
 
 import org.eclipse.lsp4j.ApplyWorkspaceEditParams
 import org.eclipse.lsp4j.ApplyWorkspaceEditResponse
+import org.eclipse.lsp4j.RenameFile
 import org.eclipse.lsp4j.ConfigurationParams
 import org.eclipse.lsp4j.ExecuteCommandParams
 import org.eclipse.lsp4j.MessageActionItem
@@ -137,6 +140,27 @@ class McpLanguageClient(workspace: AbsolutePath) extends MetalsLanguageClient {
                 .flatMap(e => if (e.isLeft) Some(e.getLeft) else None)
                 .toList
               updateFile(path, textEdits.asJava)
+            }
+          } else {
+            change.getRight match {
+              case renameFile: RenameFile =>
+                val oldPath = renameFile.getOldUri.toAbsolutePath
+                val newPath = renameFile.getNewUri.toAbsolutePath
+                if (oldPath.exists) {
+                  Files.createDirectories(newPath.toNIO.getParent)
+                  Files.move(
+                    oldPath.toNIO,
+                    newPath.toNIO,
+                    StandardCopyOption.REPLACE_EXISTING,
+                  )
+                  scribe.debug(
+                    s"[MCP Edit] Renamed file $oldPath to $newPath"
+                  )
+                }
+              case op =>
+                scribe.debug(
+                  s"[MCP Edit] Ignoring unsupported resource operation: ${op.getClass.getSimpleName}"
+                )
             }
           }
         }
