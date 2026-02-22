@@ -97,6 +97,11 @@ class TestMcpClient(url: String, val port: Int)(implicit ec: ExecutionContext) {
     callTool("format-file", params).map(_.mkString)
   }
 
+  def compilationStatus(): Future[String] = {
+    val params = objectMapper.createObjectNode()
+    callTool("compilation-status", params).map(_.mkString)
+  }
+
   def rename(
       filePath: String,
       line: Int,

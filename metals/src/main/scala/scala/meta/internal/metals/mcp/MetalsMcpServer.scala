@@ -21,6 +21,7 @@ import scala.meta.internal.metals.Compilations
 import scala.meta.internal.metals.ConnectionProvider
 import scala.meta.internal.metals.Diagnostics
 import scala.meta.internal.metals.EmptyCancelToken
+import scala.meta.internal.metals.FileChanges
 import scala.meta.internal.metals.FormattingProvider
 import scala.meta.internal.metals.JsonParser.XtensionSerializableToJson
 import scala.meta.internal.metals.MetalsEnrichments._
@@ -79,6 +80,7 @@ class MetalsMcpServer(
     formattingProvider: FormattingProvider,
     scalafixLlmRuleProvider: ScalafixLlmRuleProvider,
     renameProvider: RenameProvider,
+    fileChanges: FileChanges,
 )(implicit
     ec: ExecutionContext
 ) extends Cancelable {
@@ -134,6 +136,7 @@ class MetalsMcpServer(
     asyncServer.addTool(createFindDepTool()).subscribe()
     asyncServer.addTool(createListModulesTool()).subscribe()
     asyncServer.addTool(createFormatTool()).subscribe()
+    asyncServer.addTool(createCompilationStatusTool()).subscribe()
     asyncServer.addTool(createRenameTool()).subscribe()
     asyncServer.addTool(createGenerateScalafixRuleTool()).subscribe()
     asyncServer.addTool(createRunScalafixRuleTool()).subscribe()
@@ -1051,6 +1054,52 @@ class MetalsMcpServer(
             )
             .toMono
         }
+      },
+    )
+  }
+
+  private def createCompilationStatusTool(): AsyncToolSpecification = {
+    val schema =
+      """|{
+         |  "type": "object",
+         |  "properties": {}
+         |}""".stripMargin
+    val tool = Tool
+      .builder()
+      .name("compilation-status")
+      .description(
+        """|Report the compilation freshness of all build targets in the project.
+           |For each module, reports whether it is: currently compiling, stale (source
+           |files changed since last compile), never compiled, or up to date.
+           |Use this before running rename or get-usages to check if semanticdb is fresh.""".stripMargin
+      )
+      .inputSchema(jsonMapper, schema)
+      .build()
+    new AsyncToolSpecification(
+      tool,
+      withErrorHandling { (_, _) =>
+        Future {
+          val allTargets = buildTargets.allBuildTargetIds
+          val neverCompiled = compilations.previouslyCompiled.toSet
+          val currentlyCompiling = compilations.currentlyCompiling.toSet
+
+          val lines = allTargets.flatMap { target =>
+            buildTargets.jvmTarget(target).map { jvmTarget =>
+              val name = jvmTarget.displayName
+              val status =
+                if (currentlyCompiling.contains(target)) "compiling"
+                else if (!neverCompiled.contains(target)) "never compiled"
+                else if (fileChanges.isDirty(target)) "stale"
+                else "up to date"
+              s"- $name: $status"
+            }
+          }
+
+          val summary =
+            if (lines.isEmpty) "No build targets found."
+            else lines.mkString("\n")
+          new CallToolResult(createContent(summary), false)
+        }.toMono
       },
     )
   }

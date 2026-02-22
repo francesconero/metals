@@ -64,6 +64,9 @@ class FileChanges(buildTargets: BuildTargets, workspace: () => AbsolutePath)(
     }
   }
 
+  def isDirty(target: BuildTargetIdentifier): Boolean =
+    dirtyBuildTargets.contains(target)
+
   def willCompile(ids: Seq[BuildTargetIdentifier]): Unit =
     buildTargets
       .buildTargetTransitiveDependencies(ids.toList)
