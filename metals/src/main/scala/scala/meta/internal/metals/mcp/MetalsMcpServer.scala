@@ -1070,10 +1070,10 @@ class MetalsMcpServer(
       .description(
         """|Report the compilation freshness of all build targets in the project.
            |For each module, reports whether it is: currently compiling, stale (source
-           |files changed since last compile), never compiled, or up to date.
+           |files changed since last compile), or up to date.
            |Use this before running any semanticdb-dependent tool (glob-search, typed-glob-search,
            |inspect, get-docs, get-usages, rename) to check if the build is fresh. If any target
-           |is stale or never compiled, call compile-full first.""".stripMargin
+           |is stale, call compile-full first.""".stripMargin
       )
       .inputSchema(jsonMapper, schema)
       .build()
@@ -1082,7 +1082,6 @@ class MetalsMcpServer(
       withErrorHandling { (_, _) =>
         Future {
           val allTargets = buildTargets.allBuildTargetIds
-          val neverCompiled = compilations.previouslyCompiled.toSet
           val currentlyCompiling = compilations.currentlyCompiling.toSet
 
           val lines = allTargets.flatMap { target =>
@@ -1090,7 +1089,6 @@ class MetalsMcpServer(
               val name = jvmTarget.displayName
               val status =
                 if (currentlyCompiling.contains(target)) "compiling"
-                else if (!neverCompiled.contains(target)) "never compiled"
                 else if (fileChanges.isDirty(target)) "stale"
                 else "up to date"
               s"- $name: $status"
